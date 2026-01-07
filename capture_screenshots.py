@@ -30,6 +30,7 @@ Example:
 
 import json
 import os
+import signal
 import subprocess
 import time
 import base64
@@ -95,7 +96,8 @@ class DaisenScreenshotCapture:
             [str(daisen_executable), "-sqlite", str(sqlite_path)],
             cwd=str(self.daisen_dir),
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
+            stderr=subprocess.PIPE,
+            preexec_fn=os.setsid
         )
         
         self.daisen_process = process
@@ -309,13 +311,16 @@ class DaisenScreenshotCapture:
         
         if self.daisen_process:
             try:
-                self.daisen_process.terminate()
-                self.daisen_process.wait(timeout=5)
-                print("✓ Daisen process terminated")
+                # self.daisen_process.terminate()
+                # self.daisen_process.wait(timeout=5)
+                # print("✓ Daisen process terminated")
+                pid = self.daisen_process.pid
+                # kill the process group started with setsid
+                os.killpg(os.getpgid(pid), signal.SIGTERM)
             except Exception as e:
                 print(f"Warning: Error terminating Daisen: {e}")
                 try:
-                    self.daisen_process.kill()
+                    os.killpg(os.getpgid(pid), signal.SIGKILL) # self.daisen_process.kill()
                 except:
                     pass
             self.daisen_process = None
