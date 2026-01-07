@@ -34,6 +34,7 @@ import subprocess
 import time
 import base64
 import tempfile
+import sys
 import requests
 from pathlib import Path
 from selenium import webdriver
@@ -42,16 +43,21 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
+import argparse
+from pathlib import Path
+
+import urllib
+
 
 class DaisenScreenshotCapture:
     """
     Captures screenshots of Daisen visualizations and converts them to base64 format.
     """
     
-    def __init__(self, view_record_dir="/home/Velocity/Desktop/sarch_lab/DaisenBot_Dataset/view_record",
-                 data_dir="/home/Velocity/Desktop/sarch_lab/DaisenBot_Dataset/data",
-                 daisen_dir="/home/Velocity/Desktop/sarch_lab/akita/daisen",
-                 output_dir=None):
+    def __init__(self, view_record_dir, # ="/home/Velocity/Desktop/sarch_lab/DaisenBot_Dataset/view_record"
+                 data_dir, # ="/home/Velocity/Desktop/sarch_lab/DaisenBot_Dataset/data"
+                 daisen_dir, # ="/home/Velocity/Desktop/sarch_lab/akita/daisen"
+                 output_dir): # =None
         self.view_record_dir = Path(view_record_dir)
         self.data_dir = Path(data_dir)
         self.daisen_dir = Path(daisen_dir)
@@ -247,6 +253,13 @@ class DaisenScreenshotCapture:
                 view_id = entry['id']
                 view_data_id = entry['data_id']
                 view_url = entry['view_url']
+
+                # Normalize URL: rewrite localhost:5173 -> localhost:3001 if needed
+                parsed = urllib.parse.urlparse(view_url)
+                if parsed.hostname in ("localhost", "127.0.0.1") and parsed.port == 5173:
+                    parsed = parsed._replace(netloc=f"{parsed.hostname}:3001")
+                    view_url = urllib.parse.urlunparse(parsed)
+                    print(f"Rewrote view_url to use port 3001: {view_url}")
                 
                 # Capture screenshot and convert to base64
                 base64_image = self.capture_screenshot(view_url, driver)
@@ -311,30 +324,63 @@ class DaisenScreenshotCapture:
 def main():
     """
     Main function to run the screenshot capture process.
-    
+
     Usage:
         python capture_screenshots.py <json_filename>
-        
+
     Example:
         python capture_screenshots.py spmv.json
     """
-    import sys
+
     
-    if len(sys.argv) < 2:
-        print("Usage: python capture_screenshots.py <json_filename>")
-        print("Example: python capture_screenshots.py spmv.json")
-        sys.exit(1)
-    
-    json_filename = sys.argv[1]
-    
+    script_dir = Path(__file__).parent
+    parent_dir = script_dir.parent
+
+    default_view_record = str(parent_dir / "daisenbot_dataset" / "view_record")
+    default_data_dir = str(parent_dir / "daisenbot_dataset" / "data")
+    default_daisen_dir = str(parent_dir / "akita" / "daisen")
+    default_output_dir = str(script_dir / "output")
+
+    os.makedirs(default_output_dir, exist_ok=True)
+
+    parser = argparse.ArgumentParser(description="Daisen Screenshot Capture Tool")
+    parser.add_argument("json_filename", help="JSON filename in view_record directory (e.g., spmv.json)")
+    parser.add_argument(
+        "--view-record-dir",
+        default=default_view_record,
+        help=f"Path to the view_record directory (default: {default_view_record})"
+    )
+    parser.add_argument(
+        "--data-dir",
+        default=default_data_dir,
+        help="Path to the data directory containing .sqlite3 files (default: ../daisenbot_dataset/data)"
+    )
+    parser.add_argument(
+        "--daisen-dir",
+        default=default_daisen_dir,
+        help=f"Path to the daisen executable directory (default: {default_daisen_dir})"
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=default_output_dir,
+        help="Directory to write the screenshots output (default: script directory/output)"
+    )
+
+    args = parser.parse_args()
+
     try:
-        capture = DaisenScreenshotCapture()
-        output_path = capture.process_json(json_filename)
+        capture = DaisenScreenshotCapture(
+            view_record_dir=args.view_record_dir,
+            data_dir=args.data_dir,
+            daisen_dir=args.daisen_dir,
+            output_dir=args.output_dir
+        )
+        output_path = capture.process_json(args.json_filename)
         print(f"\n{'='*60}")
         print(f"SUCCESS! Screenshots saved to:")
         print(f"{output_path}")
         print(f"{'='*60}")
-        
+
     except Exception as e:
         print(f"\n{'='*60}")
         print(f"ERROR: {str(e)}")
