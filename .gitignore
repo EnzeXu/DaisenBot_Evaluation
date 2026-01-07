@@ -24,3 +24,6 @@ Thumbs.db
 
 .env
 output/
+screenshot/
+tmp.txt
+logs.txt

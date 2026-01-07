@@ -344,7 +344,7 @@ def main():
     default_view_record = str(parent_dir / "daisenbot_dataset" / "view_record")
     default_data_dir = str(parent_dir / "daisenbot_dataset" / "data")
     default_daisen_dir = str(parent_dir / "akita" / "daisen")
-    default_output_dir = str(script_dir / "output")
+    default_output_dir = str(script_dir / "screenshot")
 
     os.makedirs(default_output_dir, exist_ok=True)
 
