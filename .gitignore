@@ -27,3 +27,5 @@ output/
 screenshot/
 tmp.txt
 logs.txt
+record/*
+trash.txt

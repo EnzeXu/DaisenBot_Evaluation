@@ -1,16 +1,68 @@
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 
+from bert_score import score
+from rouge_score import rouge_scorer
+from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
+
 model = SentenceTransformer("all-mpnet-base-v2")
 
 
-def sentence_similarity(str1: str, str2: str) -> float:
-    e1 = model.encode(str1)
-    e2 = model.encode(str2)
+def sbert_cosine_similarity(pred: str, ref: str) -> float:
+    e1 = model.encode(pred)
+    e2 = model.encode(ref)
+    return cosine_similarity([e1], [e2])[0][0]  # range: [-1, 1]
 
-    score = cosine_similarity([e1], [e2])[0][0]
-    score_01 = (score + 1) / 2 # from [-1, 1] to [0, 1]
-    return score_01
+def bertscore_f1(pred: str, ref: str) -> float:
+    _, _, F1 = score(
+        [pred],
+        [ref],
+        lang="en",
+        model_type="roberta-large",
+        verbose=False
+    )
+    return F1.item()  # range: [0, 1]
+
+scorer = rouge_scorer.RougeScorer(["rougeL"], use_stemmer=True)
+
+def rouge_l_f1(pred: str, ref: str) -> float:
+    scores = scorer.score(ref, pred)
+    return scores["rougeL"].fmeasure  # range: [0, 1]
+
+def bleu_score(pred: str, ref: str) -> float:
+    smoothie = SmoothingFunction().method1
+    return sentence_bleu(
+        [ref.split()],
+        pred.split(),
+        smoothing_function=smoothie
+    )  # range: [0, 1]
+
+def multiple_choice_eval(answer_str: str, gt_str: str) -> int:
+    """
+    Return 1 if the first uppercased letter in answer_str matches the first
+    uppercased letter in gt_str. Return 0 if answer_str has no uppercase letter
+    or the letters do not match. Raise ValueError if gt_str contains no uppercase letter.
+    """
+    import re
+
+    if gt_str is None:
+        raise ValueError("ground truth string is None")
+
+    m_gt = re.search(r"[A-Z]", gt_str)
+    if not m_gt:
+        raise ValueError("No uppercase letter found in ground truth string")
+
+    gt_letter = m_gt.group(0)
+
+    if answer_str is None:
+        return 0
+
+    m_ans = re.search(r"[A-Z]", answer_str)
+    if not m_ans:
+        return 0
+
+    ans_letter = m_ans.group(0)
+    return 1 if ans_letter == gt_letter else 0
 
 def test_sentence_similarity():
     # str_question = """

@@ -3,3 +3,6 @@ sentence-transformers
 selenium
 requests
 python-dotenv
+bert-score
+rouge-score
+nltk
