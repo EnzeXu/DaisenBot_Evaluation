@@ -28,4 +28,7 @@ screenshot/
 tmp.txt
 logs.txt
 record/*
+record_*/
 trash.txt
+
+attachment_log/*

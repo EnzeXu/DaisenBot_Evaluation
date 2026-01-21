@@ -4,6 +4,8 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 import eval
 from agent import gpt_baseline
+from attachment import get_auto_attachment
+from strings import BENCHMARK_ID_DICT
 import csv
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -54,11 +56,11 @@ class ExperimentWriter:
         if path.exists():
             return
         if question_type == "multiple_choice":
-            # time,benchmark,question_id,question_type,n_times_idx,q_text,gt_text,method,response,score
-            header = ["time","benchmark","question_id","question_type","n_times_idx","q_text","gt_text","method","response","score"]
+            # time,benchmark,question_id,question_type,attachment_mode,n_times_idx,q_text,gt_text,method,response,score
+            header = ["time","benchmark","question_id","question_type","attachment_mode","n_times_idx","q_text","gt_text","method","response","score"]
         else:  # open_ended
-            # time,benchmark,question_id,question_type,n_times_idx,q_text,gt_text,method,response,score_sbert,score_bertscore,score_rougel,score_bleu
-            header = ["time","benchmark","question_id","question_type","n_times_idx","q_text","gt_text","method","response","score_sbert","score_bertscore","score_rougel","score_bleu"]
+            # time,benchmark,question_id,question_type,attachment_mode,n_times_idx,q_text,gt_text,method,response,score_sbert,score_bertscore,score_rougel,score_bleu
+            header = ["time","benchmark","question_id","question_type","attachment_mode","n_times_idx","q_text","gt_text","method","response","score_sbert","score_bertscore","score_rougel","score_bleu"]
         with path.open("w", newline="") as f:
             writer = csv.writer(f, quoting=csv.QUOTE_ALL)
             writer.writerow(header)
@@ -67,6 +69,7 @@ class ExperimentWriter:
                               benchmark: str,
                               question_id: str,
                               question_type: str,
+                              attachment_mode: str,
                               n_times_idx: int,
                               q_text: str,
                               gt_text: str,
@@ -98,6 +101,7 @@ class ExperimentWriter:
                          benchmark: str,
                          question_id: str,
                          question_type: str,
+                         attachment_mode: str,
                          n_times_idx: int,
                          q_text: str,
                          gt_text: str,
@@ -116,6 +120,7 @@ class ExperimentWriter:
             self._sanitize(benchmark),
             self._sanitize(question_id),
             self._sanitize(question_type),
+            self._sanitize(attachment_mode),
             str(n_times_idx),
             self._sanitize(q_text_clean),
             self._sanitize(gt_text),
@@ -136,7 +141,7 @@ class ExperimentWriter:
         - For multiple_choice: aggregate per (benchmark,question_id,question_type,q_text,gt_text,method)
           compute score_avg and score_most (1 if count_of_1s >= ceil(n_times/2) else 0).
           response in summary is the most frequent response across runs; time uses the latest time string.
-        - For open_ended: aggregate per (benchmark,question_id,question_type,q_text,gt_text,method)
+        - For open_ended: aggregate per (benchmark,question_id,question_type,attachment_mode,q_text,gt_text,method)
           compute averages for sbert, bertscore, rougel, bleu. Response is the most frequent response; time uses latest.
         Existing summary file will be replaced.
         """
@@ -160,12 +165,13 @@ class ExperimentWriter:
         groups = {}  # key -> aggregation dict
 
         if question_type == "multiple_choice":
-            # expected columns: time,benchmark,question_id,question_type,n_times_idx,q_text,gt_text,method,response,score
+            # expected columns: time,benchmark,question_id,question_type,attachment_mode,n_times_idx,q_text,gt_text,method,response,score
             for r in rows:
                 key = (
                     r["benchmark"],
                     r["question_id"],
                     r["question_type"],
+                    r["attachment_mode"],
                     r["q_text"],
                     r["gt_text"],
                     r["method"],
@@ -189,11 +195,11 @@ class ExperimentWriter:
             # write summary (replace existing)
             with summary_path.open("w", newline="") as f:
                 writer = csv.writer(f, quoting=csv.QUOTE_ALL)
-                header = ["time","benchmark","question_id","question_type","q_text","gt_text","method","response","score_most","score_avg"]
+                header = ["time","benchmark","question_id","question_type","attachment_mode","q_text","gt_text","method","response","score_most","score_avg"]
                 writer.writerow(header)
                 threshold = math.ceil(n_times / 2)
                 for key, g in groups.items():
-                    benchmark, question_id, question_type_k, q_text, gt_text, method = key
+                    benchmark, question_id, question_type_k, attachment_mode, q_text, gt_text, method = key
                     # choose latest time (ISO format string)
                     time_val = max(g["times"]) if g["times"] else ""
                     # most common response
@@ -207,6 +213,7 @@ class ExperimentWriter:
                         benchmark,
                         question_id,
                         question_type_k,
+                        attachment_mode,
                         q_text,
                         gt_text,
                         method,
@@ -217,12 +224,13 @@ class ExperimentWriter:
 
         elif question_type == "open_ended":
             # expected columns:
-            # time,benchmark,question_id,question_type,n_times_idx,q_text,gt_text,method,response,score_sbert,score_bertscore,score_rougel,score_bleu
+            # time,benchmark,question_id,question_type,attachment_mode,n_times_idx,q_text,gt_text,method,response,score_sbert,score_bertscore,score_rougel,score_bleu
             for r in rows:
                 key = (
                     r["benchmark"],
                     r["question_id"],
                     r["question_type"],
+                    r["attachment_mode"],
                     r["q_text"],
                     r["gt_text"],
                     r["method"],
@@ -254,10 +262,10 @@ class ExperimentWriter:
             # write summary
             with summary_path.open("w", newline="") as f:
                 writer = csv.writer(f, quoting=csv.QUOTE_ALL)
-                header = ["time","benchmark","question_id","question_type","q_text","gt_text","method","response","score_sbert_avg","score_bertscore_avg","score_rougel_avg","score_bleu_avg"]
+                header = ["time","benchmark","question_id","question_type","attachment_mode","q_text","gt_text","method","response","score_sbert_avg","score_bertscore_avg","score_rougel_avg","score_bleu_avg"]
                 writer.writerow(header)
                 for key, g in groups.items():
-                    benchmark, question_id, question_type_k, q_text, gt_text, method = key
+                    benchmark, question_id, question_type_k, attachment_mode, q_text, gt_text, method = key
                     time_val = max(g["times"]) if g["times"] else ""
                     response_most, _ = g["responses"].most_common(1)[0] if g["responses"] else ("", 0)
                     def avg(lst):
@@ -271,6 +279,7 @@ class ExperimentWriter:
                         benchmark,
                         question_id,
                         question_type_k,
+                        attachment_mode,
                         q_text,
                         gt_text,
                         method,
@@ -291,7 +300,7 @@ def question_formatting(question_type: str, question: str, options: list = None)
     if question_type == "multiple_choice" and options:
         output += "Answer with ONLY the letter of your chosen option in the format [A], [B], [C], or [D]. Do not include any explanation, reasoning, or additional text. Your response must be exactly one of: [A], [B], [C], or [D].\n\n"
     elif question_type == "open_ended":
-        output += "Try your best to provide a clear response to the question below (within 100 words)\n\n"
+        output += "Try your best to provide a clear response to the question below (within 200 words)\n\n"
     else:
         # Generic instruction for other question types
         output += "Instruction: Provide a direct and concise answer to the question.\n\n"
@@ -317,6 +326,7 @@ def process_one_question(benchmark: str,
                          view_record_dir: str,
                          question_dir: str,
                          screenshot_dir: str,
+                         attachment_mode: str = "auto",  # "auto" or "fixed"
                          debug: bool = False):
     """
     Build and send the frontend-like request to the local API on port 3001 for a single question.
@@ -439,29 +449,52 @@ def process_one_question(benchmark: str,
             "selectedComponentNameList": [],
             "startTime": start_time
         }
+        if attachment_mode == "fixed":
+            if attachment:
+                trace_info_raw = attachment.get("traceInfo")
+                if trace_info_raw is not None:
+                    # copy traceInfo but ensure required keys exist and fall back to defaults
+                    trace_info_payload = {
+                        "endTime": trace_info_raw.get("endTime", end_time),
+                        "selected": trace_info_raw.get("selected", 0),
+                        "selectedComponentNameList": trace_info_raw.get("selectedComponentNameList", []) or [],
+                        "startTime": trace_info_raw.get("startTime", start_time)
+                    }
+                else:
+                    trace_info_payload = default_trace
 
-        if attachment:
-            trace_info_raw = attachment.get("traceInfo")
-            if trace_info_raw is not None:
-                # copy traceInfo but ensure required keys exist and fall back to defaults
-                trace_info_payload = {
-                    "endTime": trace_info_raw.get("endTime", end_time),
-                    "selected": trace_info_raw.get("selected", 0),
-                    "selectedComponentNameList": trace_info_raw.get("selectedComponentNameList", []) or [],
-                    "startTime": trace_info_raw.get("startTime", start_time)
-                }
+                selected_keys_payload = attachment.get("selectedGitHubRoutineKeys")
+                if selected_keys_payload is None:
+                    selected_keys_payload = []
             else:
                 trace_info_payload = default_trace
-
-            selected_keys_payload = attachment.get("selectedGitHubRoutineKeys")
+                selected_keys_payload = []
+        else:  # auto
+            trace_info_payload, selected_keys_payload = get_auto_attachment(
+                messages=[assistant_msg, system_msg, user_msg],
+                default_trace=default_trace,
+                benchmark=benchmark,
+                question_id=question_id,
+                logging=True
+            )
+            # validate trace_info_payload
+            if trace_info_payload is None:
+                trace_info_payload = default_trace
+            else:
+                # ensure required keys exist
+                trace_info_payload = {
+                    "endTime": trace_info_payload.get("endTime", end_time),
+                    "selected": trace_info_payload.get("selected", 0),
+                    "selectedComponentNameList": trace_info_payload.get("selectedComponentNameList", []) or [],
+                    "startTime": trace_info_payload.get("startTime", start_time)
+                }
             if selected_keys_payload is None:
                 selected_keys_payload = []
-        else:
-            trace_info_payload = default_trace
-            selected_keys_payload = []
 
+        messages = [assistant_msg, system_msg, user_msg]
+        
         payload = {
-            "messages": [assistant_msg, system_msg, user_msg],
+            "messages": messages,
             "traceInfo": trace_info_payload,
             "selectedGitHubRoutineKeys": selected_keys_payload
         }
@@ -548,6 +581,7 @@ def process_questions(benchmark: str,
                       ground_truth_dir: str,
                       question_type: str,
                       n_times: int = 3,
+                      attachment_mode: str = "auto",  # "auto" or "fixed"
                       debug: bool = False):
     
     writer = ExperimentWriter()
@@ -561,18 +595,20 @@ def process_questions(benchmark: str,
                 view_record_dir=view_record_dir,
                 question_dir=question_dir,
                 screenshot_dir=screenshot_dir,
+                attachment_mode=attachment_mode,
                 debug=debug
             )
-
-            gpt_baseline_resp_with_image = gpt_baseline(q_text, image_data_url, debug=debug)
-            gpt_baseline_resp_without_image = gpt_baseline(q_text, "", debug=debug)
+            if attachment_mode == "fixed":
+                gpt_baseline_resp_with_image = gpt_baseline(q_text, image_data_url, debug=debug)
+                gpt_baseline_resp_without_image = gpt_baseline(q_text, "", debug=debug)
             
             gt_text = load_ground_truth(benchmark, question_id, ground_truth_dir, debug)
 
             if question_type == "multiple_choice":
                 score_daisenbot = eval.multiple_choice_eval(daisenbot_text, gt_text)
-                score_baseline_with_image = eval.multiple_choice_eval(gpt_baseline_resp_with_image, gt_text)
-                score_baseline_without_image = eval.multiple_choice_eval(gpt_baseline_resp_without_image, gt_text)
+                if attachment_mode == "fixed":
+                    score_baseline_with_image = eval.multiple_choice_eval(gpt_baseline_resp_with_image, gt_text)
+                    score_baseline_without_image = eval.multiple_choice_eval(gpt_baseline_resp_without_image, gt_text)
                 if debug:
                     print(f"Similarity Score (DaisenBot vs. ground truth): {score_daisenbot:.4f}")
                     print(f"Similarity Score (GPT Baseline with image vs. ground truth): {score_baseline_with_image:.4f}")
@@ -580,66 +616,79 @@ def process_questions(benchmark: str,
 
                 writer.write_multiple_choice(
                     benchmark, question_id, question_type,
+                    attachment_mode,
                     n_times_idx,
                     q_text, gt_text,
                     "daisenbot_base", daisenbot_text, score_daisenbot
                 )
-                writer.write_multiple_choice(
-                    benchmark, question_id, question_type,
-                    n_times_idx,
-                    q_text, gt_text,
-                    "gpt-5.2_with_image", gpt_baseline_resp_with_image, score_baseline_with_image
-                )
-                writer.write_multiple_choice(
-                    benchmark, question_id, question_type,
-                    n_times_idx,
-                    q_text, gt_text,
-                    "gpt-5.2_without_image", gpt_baseline_resp_without_image, score_baseline_without_image
-                )
+                if attachment_mode == "fixed":
+                    writer.write_multiple_choice(
+                        benchmark, question_id, question_type,
+                        attachment_mode,
+                        n_times_idx,
+                        q_text, gt_text,
+                        "gpt-5.2_with_image", gpt_baseline_resp_with_image, score_baseline_with_image
+                    )
+                    writer.write_multiple_choice(
+                        benchmark, question_id, question_type,
+                        attachment_mode,
+                        n_times_idx,
+                        q_text, gt_text,
+                        "gpt-5.2_without_image", gpt_baseline_resp_without_image, score_baseline_without_image
+                    )
             elif question_type == "open_ended":
                 # sbert
                 sbert_score_daisenbot = eval.sbert_cosine_similarity(daisenbot_text, gt_text)
-                sbert_score_baseline_with_image = eval.sbert_cosine_similarity(gpt_baseline_resp_with_image, gt_text)
-                sbert_score_baseline_without_image = eval.sbert_cosine_similarity(gpt_baseline_resp_without_image, gt_text)
+                if attachment_mode == "fixed":
+                    sbert_score_baseline_with_image = eval.sbert_cosine_similarity(gpt_baseline_resp_with_image, gt_text)
+                    sbert_score_baseline_without_image = eval.sbert_cosine_similarity(gpt_baseline_resp_without_image, gt_text)
                 # bertscore
                 bertscore_daisenbot = eval.bertscore_f1(daisenbot_text, gt_text)
-                bertscore_baseline_with_image = eval.bertscore_f1(gpt_baseline_resp_with_image, gt_text)
-                bertscore_baseline_without_image = eval.bertscore_f1(gpt_baseline_resp_without_image, gt_text)
+                if attachment_mode == "fixed":
+                    bertscore_baseline_with_image = eval.bertscore_f1(gpt_baseline_resp_with_image, gt_text)
+                    bertscore_baseline_without_image = eval.bertscore_f1(gpt_baseline_resp_without_image, gt_text)
                 # rouge-l
                 rouge_l_daisenbot = eval.rouge_l_f1(daisenbot_text, gt_text)
-                rouge_l_baseline_with_image = eval.rouge_l_f1(gpt_baseline_resp_with_image, gt_text)
-                rouge_l_baseline_without_image = eval.rouge_l_f1(gpt_baseline_resp_without_image, gt_text)
+                if attachment_mode == "fixed":
+                    rouge_l_baseline_with_image = eval.rouge_l_f1(gpt_baseline_resp_with_image, gt_text)
+                    rouge_l_baseline_without_image = eval.rouge_l_f1(gpt_baseline_resp_without_image, gt_text)
                 # bleu
                 bleu_daisenbot = eval.bleu_score(daisenbot_text, gt_text)
-                bleu_baseline_with_image = eval.bleu_score(gpt_baseline_resp_with_image, gt_text)
-                bleu_baseline_without_image = eval.bleu_score(gpt_baseline_resp_without_image, gt_text)
+                if attachment_mode == "fixed":
+                    bleu_baseline_with_image = eval.bleu_score(gpt_baseline_resp_with_image, gt_text)
+                    bleu_baseline_without_image = eval.bleu_score(gpt_baseline_resp_without_image, gt_text)
 
                 if debug:
                     print(f"Similarity Score (DaisenBot vs. ground truth): {sbert_score_daisenbot:.6f} / {bertscore_daisenbot:.6f} / {rouge_l_daisenbot:.4f} / {bleu_daisenbot:.4f}")
-                    print(f"Similarity Score (GPT Baseline with image vs. ground truth): {sbert_score_baseline_with_image:.6f} / {bertscore_baseline_with_image:.6f} / {rouge_l_baseline_with_image:.4f} / {bleu_baseline_with_image:.4f}")
-                    print(f"Similarity Score (GPT Baseline without image vs. ground truth): {sbert_score_baseline_without_image:.6f} / {bertscore_baseline_without_image:.6f} / {rouge_l_baseline_without_image:.4f} / {bleu_baseline_without_image:.4f}")
+                    if attachment_mode == "fixed":
+                        print(f"Similarity Score (GPT Baseline with image vs. ground truth): {sbert_score_baseline_with_image:.6f} / {bertscore_baseline_with_image:.6f} / {rouge_l_baseline_with_image:.4f} / {bleu_baseline_with_image:.4f}")
+                        print(f"Similarity Score (GPT Baseline without image vs. ground truth): {sbert_score_baseline_without_image:.6f} / {bertscore_baseline_without_image:.6f} / {rouge_l_baseline_without_image:.4f} / {bleu_baseline_without_image:.4f}")
                     
                 writer.write_open_ended(
                     benchmark, question_id, question_type,
+                    attachment_mode,
                     n_times_idx,
                     q_text, gt_text,
                     "daisenbot_base", daisenbot_text,
                     sbert_score_daisenbot, bertscore_daisenbot, rouge_l_daisenbot, bleu_daisenbot
                 )
-                writer.write_open_ended(
-                    benchmark, question_id, question_type,
-                    n_times_idx,
-                    q_text, gt_text,
-                    "gpt-5.2_with_image", gpt_baseline_resp_with_image,
-                    sbert_score_baseline_with_image, bertscore_baseline_with_image, rouge_l_baseline_with_image, bleu_baseline_with_image
-                )
-                writer.write_open_ended(
-                    benchmark, question_id, question_type,
-                    n_times_idx,
-                    q_text, gt_text,
-                    "gpt-5.2_without_image", gpt_baseline_resp_without_image,
-                    sbert_score_baseline_without_image, bertscore_baseline_without_image, rouge_l_baseline_without_image, bleu_baseline_without_image
-                )
+                if attachment_mode == "fixed":
+                    writer.write_open_ended(
+                        benchmark, question_id, question_type,
+                        attachment_mode,
+                        n_times_idx,
+                        q_text, gt_text,
+                        "gpt-5.2_with_image", gpt_baseline_resp_with_image,
+                        sbert_score_baseline_with_image, bertscore_baseline_with_image, rouge_l_baseline_with_image, bleu_baseline_with_image
+                    )
+                    writer.write_open_ended(
+                        benchmark, question_id, question_type,
+                        attachment_mode,
+                        n_times_idx,
+                        q_text, gt_text,
+                        "gpt-5.2_without_image", gpt_baseline_resp_without_image,
+                        sbert_score_baseline_without_image, bertscore_baseline_without_image, rouge_l_baseline_without_image, bleu_baseline_without_image
+                    )
             
             else:
                 raise ValueError(f"Unsupported question type: {question_type}")
@@ -648,28 +697,36 @@ def process_questions(benchmark: str,
 
 if __name__ == "__main__":
     # basic test case
-    benchmark = "bicg" # matrixmultiplication
-    benchmark_id = "10"
     question_id_tail = "02" # 01 for multiple choice, 02 for open ended
-    question_id_list = [f"Q{benchmark_id}000000{i}{question_id_tail}" for i in range(5)] # "Q10000000001""Q10000000101","Q10000000201","Q10000000301","Q10000000401"
     question_type = "open_ended" # "open_ended" or "multiple_choice"
-    debug = False
+    debug = True
+    n_times = 3
+    
+
+
+    benchmark = "bicg" #  fir 02 kmeans 11 # matrixmultiplication
+    benchmark_id = f"{BENCHMARK_ID_DICT[benchmark]:02d}" # "10"
+    
+    question_id_list = [f"Q{benchmark_id}000000{i}{question_id_tail}" for i in range(5)] # "Q10000000001""Q10000000101","Q10000000201","Q10000000301","Q10000000401"
+    
 
     default_view_record_dir = str(Path(__file__).parent.parent / "daisenbot_dataset" / "view_record")
     default_ground_truth_dir = str(Path(__file__).parent.parent / "daisenbot_dataset" / "label")
     default_question_dir = str(Path(__file__).parent.parent / "daisenbot_dataset" / "question")
     default_screenshot_dir = str(Path(__file__).parent / "screenshot")
 
-    process_questions(
-        benchmark=benchmark,
-        question_id_list=question_id_list,
-        question_dir=default_question_dir,
-        view_record_dir=default_view_record_dir,
-        screenshot_dir=default_screenshot_dir,
-        ground_truth_dir=default_ground_truth_dir,
-        question_type=question_type,
-        n_times=3,
-        debug=debug
-    )
+    for attachment_mode in ["auto", "fixed"]:  # "auto" or "fixed"
+        process_questions(
+            benchmark=benchmark,
+            question_id_list=question_id_list,
+            question_dir=default_question_dir,
+            view_record_dir=default_view_record_dir,
+            screenshot_dir=default_screenshot_dir,
+            ground_truth_dir=default_ground_truth_dir,
+            question_type=question_type,
+            n_times=n_times,
+            attachment_mode=attachment_mode,
+            debug=debug
+        )
 
     
